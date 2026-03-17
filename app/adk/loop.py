@@ -9,8 +9,7 @@ from google.genai import types
 from app.adk.pipeline import create_trading_pipeline
 from app.config import settings
 from app.database import SessionLocal
-from app.models import AgentConfig, PortfolioSnapshot, Position, Feature, MarketSnapshot, Order
-from app.adk.agents.persistence import get_last_tick_state
+from app.models import AgentConfig, PortfolioSnapshot, Position, Feature, MarketSnapshot
 from app.services.exchange import exchange_service
 
 logger = logging.getLogger(__name__)
@@ -41,7 +40,7 @@ def _build_agent_config(agent: AgentConfig) -> dict:
         "max_position_pct": agent.max_position_pct or 0.50,
         "drawdown_limit_pct": agent.drawdown_limit_pct or 0.20,
         "daily_loss_limit_pct": agent.daily_loss_limit_pct or 0.05,
-        "cooldown_minutes": agent.cooldown_minutes or 2,
+        "cooldown_minutes": agent.cooldown_minutes or 5,
         "max_consecutive_losses": agent.max_consecutive_losses or 3,
         "rsi_buy_max": agent.rsi_buy_max or 70.0,
         "rsi_sell_min": agent.rsi_sell_min or 30.0,
@@ -59,11 +58,9 @@ def _restore_portfolio_from_db(agent_id: int, budget: float) -> dict:
             .first()
         )
         pos = db.query(Position).filter(Position.agent_id == agent_id).first()
-        # Use actual Order count (authoritative, survives restarts)
-        actual_total_trades = db.query(Order).filter(Order.agent_id == agent_id).count()
 
         if snap:
-            logger.info(f"Restoring portfolio from DB: cash={snap.cash}, equity={snap.equity}, trades={actual_total_trades}")
+            logger.info(f"Restoring portfolio from DB: cash={snap.cash}, equity={snap.equity}, trades={snap.total_trades}")
             return {
                 "cash": snap.cash,
                 "position_qty": pos.quantity if pos else 0.0,
@@ -71,7 +68,7 @@ def _restore_portfolio_from_db(agent_id: int, budget: float) -> dict:
                 "side": pos.side if pos else "flat",
                 "win_count": snap.win_count,
                 "loss_count": snap.loss_count,
-                "total_trades": actual_total_trades,
+                "total_trades": snap.total_trades,
                 "max_drawdown": snap.max_drawdown,
                 "peak_equity": max(snap.equity, budget),
                 "daily_pnl": 0.0,
@@ -168,7 +165,7 @@ def _seed_agents():
                 max_position_pct=0.50,
                 drawdown_limit_pct=0.20,
                 daily_loss_limit_pct=0.05,
-                cooldown_minutes=2,
+                cooldown_minutes=5,
                 max_consecutive_losses=3,
                 rsi_buy_max=70.0,
                 rsi_sell_min=30.0,
@@ -272,19 +269,22 @@ async def _run_single_agent_loop(agent_id: int):
             ):
                 pass
 
-            # Read state from persistence agent's shared dict
-            # (ADK get_session returns original state, not agent-modified state)
-            last = get_last_tick_state(agent_id)
-            if last:
-                if last.get("features"):
-                    prev_features = last["features"]
-                if last.get("portfolio"):
-                    portfolio = last["portfolio"]
+            updated_session = await session_service.get_session(
+                app_name=app_name,
+                user_id="system",
+                session_id=session.id,
+            )
+            state = updated_session.state if updated_session else {}
 
-                trade = last.get("trade_result")
-                if trade:
-                    recent_orders.append(trade)
-                    recent_orders = recent_orders[-10:]
+            if state.get("features"):
+                prev_features = state["features"]
+            if state.get("portfolio"):
+                portfolio = state["portfolio"]
+
+            trade = state.get("trade_result")
+            if trade:
+                recent_orders.append(trade)
+                recent_orders = recent_orders[-10:]
 
         except asyncio.CancelledError:
             logger.info(f"[{symbol}] Agent loop cancelled")
