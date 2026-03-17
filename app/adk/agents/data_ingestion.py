@@ -34,5 +34,8 @@ class DataIngestionAgent(BaseAgent):
         except Exception as e:
             logger.error(f"Data ingestion failed: {e}")
             ctx.session.state["tick_error"] = str(e)
+            # Preserve last known price if available, otherwise keep default
+            if "current_price" not in ctx.session.state:
+                ctx.session.state["current_price"] = 0.0
 
         yield Event(author=self.name)

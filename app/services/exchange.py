@@ -50,7 +50,7 @@ class RateLimiter:
 
 class ExchangeService:
     def __init__(self):
-        self.exchange = ccxt.binance({"enableRateLimit": True})
+        self.exchange = ccxt.binanceus({"enableRateLimit": True})
         self._limiter = RateLimiter()
 
     def fetch_ohlcv(
