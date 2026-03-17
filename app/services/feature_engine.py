@@ -18,9 +18,9 @@ def calculate_features(df: pd.DataFrame) -> dict | None:
     atr = AverageTrueRange(high=high, low=low, close=close, window=14).average_true_range().iloc[-1]
 
     return {
-        "ema_fast": round(ema_fast, 2),
-        "ema_slow": round(ema_slow, 2),
-        "rsi": round(rsi, 2),
-        "atr": round(atr, 2),
-        "close": round(close.iloc[-1], 2),
+        "ema_fast": float(round(ema_fast, 2)),
+        "ema_slow": float(round(ema_slow, 2)),
+        "rsi": float(round(rsi, 2)),
+        "atr": float(round(atr, 2)),
+        "close": float(round(close.iloc[-1], 2)),
     }
