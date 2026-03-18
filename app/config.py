@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
+    # Auth
+    admin_username: str = "admin"
+    admin_password: str = ""
+    visitor_username: str = "visitor"
+    visitor_password: str = ""
+    jwt_secret: str = ""
+    jwt_expiration_hours: int = 24
+
     model_config = {
         "env_file": str(Path(__file__).resolve().parent.parent / ".env"),
         "env_file_encoding": "utf-8",

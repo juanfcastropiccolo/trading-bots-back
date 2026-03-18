@@ -20,7 +20,7 @@ from app.database import engine, Base, _is_sqlite
 from app.websocket_manager import ws_manager
 from app.adk.agents.persistence import set_ws_manager
 from app.adk.loop import start_loop, request_shutdown
-from app.api import agents, trades, signals, market, ws
+from app.api import agents, auth, trades, signals, market, ws
 
 logging.basicConfig(
     level=logging.INFO,
@@ -115,6 +115,7 @@ app.add_middleware(
 )
 
 # Register routers
+app.include_router(auth.router)
 app.include_router(agents.router)
 app.include_router(trades.router)
 app.include_router(signals.router)

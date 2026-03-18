@@ -6,6 +6,7 @@ from app.database import get_db
 from app.models import MarketSnapshot, PortfolioSnapshot
 from app.schemas.schemas import CandleResponse, SnapshotResponse
 from app.services.exchange import exchange_service
+from app.auth import get_current_user
 
 router = APIRouter(prefix="/api", tags=["market"])
 
@@ -28,6 +29,7 @@ def get_candles(
     timeframe: str = Query(default="1h", pattern="^(1m|1h|1d|1w)$"),
     limit: int = Query(default=200, le=1000),
     db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
 ):
     """Fetch candles from Binance with in-memory cache to avoid API spam."""
     cfg = _TF_CONFIG.get(timeframe, _TF_CONFIG["1h"])
@@ -87,6 +89,7 @@ def get_snapshots(
     agent_id: int,
     limit: int = Query(default=100, le=500),
     db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
 ):
     snapshots = (
         db.query(PortfolioSnapshot)

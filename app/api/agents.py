@@ -6,6 +6,7 @@ from app.database import get_db
 from app.models import AgentConfig, PortfolioSnapshot, Order, Position
 from app.schemas.schemas import AgentResponse, AgentCreateRequest, AddFundsRequest
 from app.adk.loop import add_agent_to_loop, remove_agent_from_loop
+from app.auth import get_current_user, require_admin
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -91,13 +92,13 @@ def _agent_to_response(agent: AgentConfig, db: Session) -> AgentResponse:
 
 
 @router.get("", response_model=list[AgentResponse])
-def list_agents(db: Session = Depends(get_db)):
+def list_agents(db: Session = Depends(get_db), _user: dict = Depends(get_current_user)):
     agents = db.query(AgentConfig).filter(AgentConfig.is_deleted.is_(False)).all()
     return [_agent_to_response(a, db) for a in agents]
 
 
 @router.get("/{agent_id}", response_model=AgentResponse)
-def get_agent(agent_id: int, db: Session = Depends(get_db)):
+def get_agent(agent_id: int, db: Session = Depends(get_db), _user: dict = Depends(get_current_user)):
     agent = db.query(AgentConfig).filter(AgentConfig.id == agent_id).first()
     if not agent or agent.is_deleted:
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -105,7 +106,7 @@ def get_agent(agent_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("", response_model=AgentResponse, status_code=201)
-async def create_agent(req: AgentCreateRequest, db: Session = Depends(get_db)):
+async def create_agent(req: AgentCreateRequest, db: Session = Depends(get_db), _admin: dict = Depends(require_admin)):
     # Get risk profile defaults
     profile = RISK_PROFILES.get(req.risk_profile, RISK_PROFILES["moderate"])
 
@@ -148,7 +149,7 @@ async def create_agent(req: AgentCreateRequest, db: Session = Depends(get_db)):
 
 
 @router.delete("/{agent_id}", status_code=204)
-async def delete_agent(agent_id: int, db: Session = Depends(get_db)):
+async def delete_agent(agent_id: int, db: Session = Depends(get_db), _admin: dict = Depends(require_admin)):
     agent = db.query(AgentConfig).filter(AgentConfig.id == agent_id).first()
     if not agent or agent.is_deleted:
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -165,7 +166,7 @@ async def delete_agent(agent_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{agent_id}/add-funds", response_model=AgentResponse)
-def add_funds(agent_id: int, req: AddFundsRequest, db: Session = Depends(get_db)):
+def add_funds(agent_id: int, req: AddFundsRequest, db: Session = Depends(get_db), _admin: dict = Depends(require_admin)):
     agent = db.query(AgentConfig).filter(AgentConfig.id == agent_id).first()
     if not agent or agent.is_deleted:
         raise HTTPException(status_code=404, detail="Agent not found")
@@ -192,7 +193,7 @@ def add_funds(agent_id: int, req: AddFundsRequest, db: Session = Depends(get_db)
 
 
 @router.patch("/{agent_id}/toggle", response_model=AgentResponse)
-async def toggle_agent(agent_id: int, db: Session = Depends(get_db)):
+async def toggle_agent(agent_id: int, db: Session = Depends(get_db), _admin: dict = Depends(require_admin)):
     agent = db.query(AgentConfig).filter(AgentConfig.id == agent_id).first()
     if not agent or agent.is_deleted:
         raise HTTPException(status_code=404, detail="Agent not found")

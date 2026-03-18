@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Signal, LLMDecision, RiskCheck
 from app.schemas.schemas import SignalResponse
+from app.auth import get_current_user
 
 router = APIRouter(prefix="/api/agents", tags=["signals"])
 
@@ -14,6 +15,7 @@ def get_signals(
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
 ):
     signals = (
         db.query(Signal)

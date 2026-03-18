@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Order
 from app.schemas.schemas import TradeResponse
+from app.auth import get_current_user
 
 router = APIRouter(prefix="/api/agents", tags=["trades"])
 
@@ -14,6 +15,7 @@ def get_trades(
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
+    _user: dict = Depends(get_current_user),
 ):
     orders = (
         db.query(Order)
