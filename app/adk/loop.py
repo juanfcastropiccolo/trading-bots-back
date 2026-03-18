@@ -10,7 +10,7 @@ from google.genai import types
 from app.adk.pipeline import create_trading_pipeline
 from app.config import settings
 from app.database import SessionLocal
-from app.models import AgentConfig, PortfolioSnapshot, Position, Feature, MarketSnapshot
+from app.models import AgentConfig, PortfolioSnapshot, Position, Feature, MarketSnapshot, Order
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +103,34 @@ def _restore_portfolio_from_db(agent_id: int, budget: float) -> dict:
         "peak_equity": budget,
         "daily_pnl": 0.0,
     }
+
+
+def _restore_recent_orders_from_db(agent_id: int, limit: int = 10) -> list[dict]:
+    """Restore recent orders from DB for cooldown tracking."""
+    db = SessionLocal()
+    try:
+        orders = (
+            db.query(Order)
+            .filter(Order.agent_id == agent_id)
+            .order_by(Order.id.desc())
+            .limit(limit)
+            .all()
+        )
+        return [
+            {
+                "side": o.side,
+                "quantity": o.quantity,
+                "price": o.price,
+                "fee": o.fee,
+                "total_cost": o.total_cost,
+                "status": o.status,
+                "mode": o.mode,
+                "created_at": o.created_at.isoformat() if o.created_at else "",
+            }
+            for o in reversed(orders)
+        ]
+    finally:
+        db.close()
 
 
 def _restore_prev_features_from_db(agent_id: int) -> dict | None:
@@ -369,22 +397,17 @@ async def _run_single_agent_loop(agent_id: int):
             ):
                 pass
 
-            updated_session = await session_service.get_session(
-                app_name=app_name,
-                user_id="system",
-                session_id=session.id,
-            )
-            state = updated_session.state if updated_session else {}
-
-            if state.get("features") and state["features"].get("ema_fast", 0) != 0:
-                prev_features = state["features"]
-            if state.get("portfolio"):
-                portfolio = state["portfolio"]
-
-            trade = state.get("trade_result")
-            if trade:
-                recent_orders.append(trade)
-                recent_orders = recent_orders[-10:]
+            # Restore state from DB instead of get_session().
+            # ADK's InMemorySessionService.get_session() returns a deep copy
+            # of the ORIGINAL session, not the one modified by the pipeline
+            # agents (state_delta is not included in BaseAgent events).
+            # Reading from DB is authoritative since PersistenceAgent commits
+            # the correct portfolio/features/orders every tick.
+            portfolio = _restore_portfolio_from_db(agent_id, agent_config.get("budget_usd", 100.0))
+            restored_features = _restore_prev_features_from_db(agent_id)
+            if restored_features:
+                prev_features = restored_features
+            recent_orders = _restore_recent_orders_from_db(agent_id)
 
         except asyncio.CancelledError:
             logger.info(f"[{symbol}] Agent loop cancelled")
