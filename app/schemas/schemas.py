@@ -32,6 +32,12 @@ class AgentResponse(BaseModel):
     max_consecutive_losses: int | None = None
     rsi_buy_max: float | None = None
     rsi_sell_min: float | None = None
+    # Advanced strategy config
+    strategy_weights: dict | None = None
+    stop_loss_atr_mult: float | None = None
+    take_profit_atr_mult: float | None = None
+    risk_per_trade_pct: float | None = None
+    enable_rl: bool | None = None
 
     model_config = {"from_attributes": True}
 
@@ -50,6 +56,12 @@ class AgentCreateRequest(BaseModel):
     max_consecutive_losses: int | None = None
     rsi_buy_max: float | None = None
     rsi_sell_min: float | None = None
+    # Advanced strategy config
+    strategy_weights: dict | None = None
+    stop_loss_atr_mult: float | None = None
+    take_profit_atr_mult: float | None = None
+    risk_per_trade_pct: float | None = None
+    enable_rl: bool | None = None
 
 
 class AddFundsRequest(BaseModel):
@@ -75,6 +87,7 @@ class SignalResponse(BaseModel):
     direction: str
     confidence: float
     reason: str | None
+    ensemble_score: float | None = None
     llm_reasoning: str | None = None
     llm_recommendation: str | None = None
     risk_approved: bool | None = None

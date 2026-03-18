@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -27,6 +28,48 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+RL_RETRAIN_INTERVAL_SECONDS = 6 * 3600  # Every 6 hours
+
+
+async def _rl_retrain_loop():
+    """Background task: retrain RL models every 6 hours."""
+    from app.database import SessionLocal
+    from app.models import AgentConfig
+
+    while True:
+        await asyncio.sleep(RL_RETRAIN_INTERVAL_SECONDS)
+        try:
+            db = SessionLocal()
+            agents_list = (
+                db.query(AgentConfig)
+                .filter(
+                    AgentConfig.is_active.is_(True),
+                    AgentConfig.is_deleted.is_(False),
+                    AgentConfig.enable_rl.is_(True),
+                )
+                .all()
+            )
+            agent_ids = [a.id for a in agents_list]
+            db.close()
+
+            if not agent_ids:
+                continue
+
+            from app.services.rl.trainer import RLTrainer
+            from app.services.rl.model_store import ModelStore
+
+            for agent_id in agent_ids:
+                try:
+                    trainer = RLTrainer(agent_id)
+                    rl_agent = trainer.train_from_history(epochs=5)
+                    ModelStore.save(agent_id, rl_agent)
+                    logger.info(f"[RL] Retrained model for agent {agent_id}")
+                except Exception as e:
+                    logger.error(f"[RL] Retrain failed for agent {agent_id}: {e}")
+
+        except Exception as e:
+            logger.error(f"[RL] Retrain loop error: {e}")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -44,17 +87,21 @@ async def lifespan(app: FastAPI):
     logger.info("Starting trading loop...")
     loop_task = start_loop()
 
+    # Start RL retrain background task
+    rl_task = asyncio.create_task(_rl_retrain_loop())
+
     yield
 
     # Shutdown
     logger.info("Shutting down trading loop...")
     request_shutdown()
     loop_task.cancel()
+    rl_task.cancel()
 
 
 app = FastAPI(
     title="Crypto Trading Mission Control",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -77,4 +124,4 @@ app.include_router(ws.router)
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "version": "0.1.0"}
+    return {"status": "ok", "version": "0.2.0"}

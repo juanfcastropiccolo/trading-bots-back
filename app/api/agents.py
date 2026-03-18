@@ -1,3 +1,4 @@
+import json
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -13,16 +14,22 @@ RISK_PROFILES = {
         max_position_pct=0.30, drawdown_limit_pct=0.10,
         daily_loss_limit_pct=0.03, cooldown_minutes=10,
         max_consecutive_losses=2, rsi_buy_max=65.0, rsi_sell_min=35.0,
+        stop_loss_atr_mult=2.5, take_profit_atr_mult=3.5,
+        risk_per_trade_pct=0.01,
     ),
     "moderate": dict(
         max_position_pct=0.50, drawdown_limit_pct=0.20,
         daily_loss_limit_pct=0.05, cooldown_minutes=2,
         max_consecutive_losses=3, rsi_buy_max=70.0, rsi_sell_min=30.0,
+        stop_loss_atr_mult=2.0, take_profit_atr_mult=3.0,
+        risk_per_trade_pct=0.02,
     ),
     "aggressive": dict(
         max_position_pct=0.75, drawdown_limit_pct=0.30,
         daily_loss_limit_pct=0.10, cooldown_minutes=2,
         max_consecutive_losses=5, rsi_buy_max=80.0, rsi_sell_min=20.0,
+        stop_loss_atr_mult=1.5, take_profit_atr_mult=2.5,
+        risk_per_trade_pct=0.03,
     ),
 }
 
@@ -38,6 +45,15 @@ def _agent_to_response(agent: AgentConfig, db: Session) -> AgentResponse:
     actual_total_trades = db.query(Order).filter(Order.agent_id == agent.id).count()
     # Position info
     pos = db.query(Position).filter(Position.agent_id == agent.id).first()
+
+    # Parse strategy weights
+    strategy_weights = None
+    if agent.strategy_weights:
+        try:
+            strategy_weights = json.loads(agent.strategy_weights)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
     return AgentResponse(
         id=agent.id,
         name=agent.name,
@@ -66,6 +82,11 @@ def _agent_to_response(agent: AgentConfig, db: Session) -> AgentResponse:
         max_consecutive_losses=agent.max_consecutive_losses,
         rsi_buy_max=agent.rsi_buy_max,
         rsi_sell_min=agent.rsi_sell_min,
+        strategy_weights=strategy_weights,
+        stop_loss_atr_mult=agent.stop_loss_atr_mult,
+        take_profit_atr_mult=agent.take_profit_atr_mult,
+        risk_per_trade_pct=agent.risk_per_trade_pct,
+        enable_rl=agent.enable_rl,
     )
 
 
@@ -88,6 +109,11 @@ async def create_agent(req: AgentCreateRequest, db: Session = Depends(get_db)):
     # Get risk profile defaults
     profile = RISK_PROFILES.get(req.risk_profile, RISK_PROFILES["moderate"])
 
+    # Serialize strategy weights if provided
+    strategy_weights_json = None
+    if req.strategy_weights:
+        strategy_weights_json = json.dumps(req.strategy_weights)
+
     agent = AgentConfig(
         name=req.name,
         symbol=req.symbol,
@@ -105,6 +131,11 @@ async def create_agent(req: AgentCreateRequest, db: Session = Depends(get_db)):
         max_consecutive_losses=req.max_consecutive_losses if req.max_consecutive_losses is not None else profile["max_consecutive_losses"],
         rsi_buy_max=req.rsi_buy_max if req.rsi_buy_max is not None else profile["rsi_buy_max"],
         rsi_sell_min=req.rsi_sell_min if req.rsi_sell_min is not None else profile["rsi_sell_min"],
+        strategy_weights=strategy_weights_json,
+        stop_loss_atr_mult=req.stop_loss_atr_mult if req.stop_loss_atr_mult is not None else profile["stop_loss_atr_mult"],
+        take_profit_atr_mult=req.take_profit_atr_mult if req.take_profit_atr_mult is not None else profile["take_profit_atr_mult"],
+        risk_per_trade_pct=req.risk_per_trade_pct if req.risk_per_trade_pct is not None else profile["risk_per_trade_pct"],
+        enable_rl=req.enable_rl if req.enable_rl is not None else False,
     )
     db.add(agent)
     db.commit()

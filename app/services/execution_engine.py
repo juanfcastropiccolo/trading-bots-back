@@ -10,12 +10,28 @@ def simulate_trade(
     current_price: float,
     portfolio: dict,
     agent_config: dict,
+    features: dict | None = None,
 ) -> dict | None:
     direction = signal["direction"]
     max_trade = agent_config.get("max_trade_usd", 10.0)
+    budget = agent_config.get("budget_usd", 100.0)
+    risk_per_trade_pct = agent_config.get("risk_per_trade_pct", 0.02)
 
     if direction == "BUY":
-        trade_usd = min(max_trade, portfolio["cash"] * 0.95)
+        # ATR-based position sizing: risk_amount = budget * risk_pct
+        atr = features.get("atr", 0) if features else 0
+        sl_mult = agent_config.get("stop_loss_atr_mult", 2.0)
+
+        if atr > 0 and sl_mult > 0:
+            risk_amount = budget * risk_per_trade_pct
+            # How many units can we risk?
+            risk_per_unit = atr * sl_mult
+            optimal_qty = risk_amount / risk_per_unit if risk_per_unit > 0 else 0
+            optimal_usd = optimal_qty * current_price
+            trade_usd = min(max_trade, optimal_usd, portfolio["cash"] * 0.95)
+        else:
+            trade_usd = min(max_trade, portfolio["cash"] * 0.95)
+
         if trade_usd < 1.0:
             return None
 

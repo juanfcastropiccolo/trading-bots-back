@@ -1,7 +1,28 @@
--- Supabase PostgreSQL schema for Crypto Trading Mission Control
--- Execute in Supabase SQL Editor
+-- ============================================================
+-- Crypto Trading Mission Control v0.2.0 — FULL RESET
+-- ============================================================
+-- WARNING: This drops ALL tables and data, then recreates.
+-- The backend auto-seeds BTC + ETH agents on startup.
+-- Run this in Supabase SQL Editor.
+-- ============================================================
 
-CREATE TABLE IF NOT EXISTS agent_configs (
+-- 1. Drop tables in FK-safe order (children first)
+DROP TABLE IF EXISTS rl_models CASCADE;
+DROP TABLE IF EXISTS portfolio_snapshots CASCADE;
+DROP TABLE IF EXISTS positions CASCADE;
+DROP TABLE IF EXISTS orders CASCADE;
+DROP TABLE IF EXISTS risk_checks CASCADE;
+DROP TABLE IF EXISTS llm_decisions CASCADE;
+DROP TABLE IF EXISTS strategy_votes CASCADE;
+DROP TABLE IF EXISTS features_extended CASCADE;
+DROP TABLE IF EXISTS features CASCADE;
+DROP TABLE IF EXISTS signals CASCADE;
+DROP TABLE IF EXISTS market_snapshots CASCADE;
+DROP TABLE IF EXISTS agent_configs CASCADE;
+
+-- 2. Recreate all tables (v0.2.0 schema)
+
+CREATE TABLE agent_configs (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
     symbol TEXT NOT NULL DEFAULT 'BTC/USDT',
@@ -10,6 +31,7 @@ CREATE TABLE IF NOT EXISTS agent_configs (
     max_trade_usd DOUBLE PRECISION NOT NULL DEFAULT 10.0,
     mode TEXT NOT NULL DEFAULT 'paper',
     is_active BOOLEAN DEFAULT TRUE,
+    -- Risk profile
     max_position_pct DOUBLE PRECISION DEFAULT 0.50,
     drawdown_limit_pct DOUBLE PRECISION DEFAULT 0.20,
     daily_loss_limit_pct DOUBLE PRECISION DEFAULT 0.05,
@@ -17,17 +39,19 @@ CREATE TABLE IF NOT EXISTS agent_configs (
     max_consecutive_losses INTEGER DEFAULT 3,
     rsi_buy_max DOUBLE PRECISION DEFAULT 70.0,
     rsi_sell_min DOUBLE PRECISION DEFAULT 30.0,
-    strategy_weights TEXT DEFAULT NULL,
+    -- v0.2: Advanced strategy config
+    strategy_weights TEXT DEFAULT NULL,          -- JSON: {"ema_crossover": 1.5, ...}
     stop_loss_atr_mult DOUBLE PRECISION DEFAULT 2.0,
     take_profit_atr_mult DOUBLE PRECISION DEFAULT 3.0,
     risk_per_trade_pct DOUBLE PRECISION DEFAULT 0.02,
     enable_rl BOOLEAN DEFAULT FALSE,
+    -- Lifecycle
     is_protected BOOLEAN DEFAULT FALSE,
     is_deleted BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS market_snapshots (
+CREATE TABLE market_snapshots (
     id SERIAL PRIMARY KEY,
     agent_id INTEGER NOT NULL REFERENCES agent_configs(id),
     timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -39,7 +63,7 @@ CREATE TABLE IF NOT EXISTS market_snapshots (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS features (
+CREATE TABLE features (
     id SERIAL PRIMARY KEY,
     agent_id INTEGER NOT NULL REFERENCES agent_configs(id),
     ema_fast DOUBLE PRECISION,
@@ -50,18 +74,21 @@ CREATE TABLE IF NOT EXISTS features (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS features_extended (
+CREATE TABLE features_extended (
     id SERIAL PRIMARY KEY,
     agent_id INTEGER NOT NULL REFERENCES agent_configs(id),
+    -- Moving averages
     ema_9 DOUBLE PRECISION,
     ema_21 DOUBLE PRECISION,
     ema_50 DOUBLE PRECISION,
+    -- Momentum
     rsi DOUBLE PRECISION,
     stoch_k DOUBLE PRECISION,
     stoch_d DOUBLE PRECISION,
     macd_line DOUBLE PRECISION,
     macd_signal DOUBLE PRECISION,
     macd_hist DOUBLE PRECISION,
+    -- Volatility
     atr DOUBLE PRECISION,
     bb_upper DOUBLE PRECISION,
     bb_middle DOUBLE PRECISION,
@@ -69,24 +96,28 @@ CREATE TABLE IF NOT EXISTS features_extended (
     bb_width DOUBLE PRECISION,
     bb_pct DOUBLE PRECISION,
     psar DOUBLE PRECISION,
+    -- Trend
     adx DOUBLE PRECISION,
     plus_di DOUBLE PRECISION,
     minus_di DOUBLE PRECISION,
     donchian_high DOUBLE PRECISION,
     donchian_low DOUBLE PRECISION,
+    -- Volume
     obv DOUBLE PRECISION,
     obv_delta DOUBLE PRECISION,
     vol_sma_20 DOUBLE PRECISION,
     vol_ratio DOUBLE PRECISION,
+    -- Fibonacci
     fib_382 DOUBLE PRECISION,
     fib_500 DOUBLE PRECISION,
     fib_618 DOUBLE PRECISION,
     fib_proximity DOUBLE PRECISION,
+    -- Close
     close DOUBLE PRECISION,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS signals (
+CREATE TABLE signals (
     id SERIAL PRIMARY KEY,
     agent_id INTEGER NOT NULL REFERENCES agent_configs(id),
     direction TEXT NOT NULL,
@@ -96,7 +127,7 @@ CREATE TABLE IF NOT EXISTS signals (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS strategy_votes (
+CREATE TABLE strategy_votes (
     id SERIAL PRIMARY KEY,
     agent_id INTEGER NOT NULL REFERENCES agent_configs(id),
     signal_id INTEGER REFERENCES signals(id),
@@ -107,7 +138,7 @@ CREATE TABLE IF NOT EXISTS strategy_votes (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS llm_decisions (
+CREATE TABLE llm_decisions (
     id SERIAL PRIMARY KEY,
     agent_id INTEGER NOT NULL REFERENCES agent_configs(id),
     signal_id INTEGER REFERENCES signals(id),
@@ -120,7 +151,7 @@ CREATE TABLE IF NOT EXISTS llm_decisions (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS risk_checks (
+CREATE TABLE risk_checks (
     id SERIAL PRIMARY KEY,
     agent_id INTEGER NOT NULL REFERENCES agent_configs(id),
     signal_id INTEGER REFERENCES signals(id),
@@ -136,7 +167,7 @@ CREATE TABLE IF NOT EXISTS risk_checks (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS orders (
+CREATE TABLE orders (
     id SERIAL PRIMARY KEY,
     agent_id INTEGER NOT NULL REFERENCES agent_configs(id),
     signal_id INTEGER REFERENCES signals(id),
@@ -151,7 +182,7 @@ CREATE TABLE IF NOT EXISTS orders (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS positions (
+CREATE TABLE positions (
     id SERIAL PRIMARY KEY,
     agent_id INTEGER NOT NULL REFERENCES agent_configs(id),
     side TEXT NOT NULL,
@@ -162,7 +193,7 @@ CREATE TABLE IF NOT EXISTS positions (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+CREATE TABLE portfolio_snapshots (
     id SERIAL PRIMARY KEY,
     agent_id INTEGER NOT NULL REFERENCES agent_configs(id),
     cash DOUBLE PRECISION NOT NULL,
@@ -176,7 +207,7 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshots (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS rl_models (
+CREATE TABLE rl_models (
     id SERIAL PRIMARY KEY,
     agent_id INTEGER NOT NULL REFERENCES agent_configs(id),
     model_type TEXT NOT NULL DEFAULT 'q_learning',
@@ -185,29 +216,12 @@ CREATE TABLE IF NOT EXISTS rl_models (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Migration: add new columns to existing agent_configs table
--- Run these if upgrading from v0.1.0
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='agent_configs' AND column_name='strategy_weights') THEN
-        ALTER TABLE agent_configs ADD COLUMN strategy_weights TEXT DEFAULT NULL;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='agent_configs' AND column_name='stop_loss_atr_mult') THEN
-        ALTER TABLE agent_configs ADD COLUMN stop_loss_atr_mult DOUBLE PRECISION DEFAULT 2.0;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='agent_configs' AND column_name='take_profit_atr_mult') THEN
-        ALTER TABLE agent_configs ADD COLUMN take_profit_atr_mult DOUBLE PRECISION DEFAULT 3.0;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='agent_configs' AND column_name='risk_per_trade_pct') THEN
-        ALTER TABLE agent_configs ADD COLUMN risk_per_trade_pct DOUBLE PRECISION DEFAULT 0.02;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='agent_configs' AND column_name='enable_rl') THEN
-        ALTER TABLE agent_configs ADD COLUMN enable_rl BOOLEAN DEFAULT FALSE;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='signals' AND column_name='ensemble_score') THEN
-        ALTER TABLE signals ADD COLUMN ensemble_score DOUBLE PRECISION DEFAULT NULL;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='llm_decisions' AND column_name='confidence_adjustment') THEN
-        ALTER TABLE llm_decisions ADD COLUMN confidence_adjustment DOUBLE PRECISION DEFAULT 0.0;
-    END IF;
-END $$;
+-- 3. Performance indexes
+CREATE INDEX idx_market_snapshots_agent_id ON market_snapshots(agent_id);
+CREATE INDEX idx_features_agent_id ON features(agent_id);
+CREATE INDEX idx_features_extended_agent_id ON features_extended(agent_id);
+CREATE INDEX idx_signals_agent_id ON signals(agent_id);
+CREATE INDEX idx_strategy_votes_signal_id ON strategy_votes(signal_id);
+CREATE INDEX idx_orders_agent_id ON orders(agent_id);
+CREATE INDEX idx_portfolio_snapshots_agent_id ON portfolio_snapshots(agent_id);
+CREATE INDEX idx_rl_models_agent_id ON rl_models(agent_id);

@@ -6,3 +6,4 @@ dist/
 data/
 *.db
 .venv/
+.env_prod.example

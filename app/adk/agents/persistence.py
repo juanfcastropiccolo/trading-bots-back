@@ -8,8 +8,8 @@ from google.adk.events import Event
 
 from app.database import SessionLocal
 from app.models import (
-    MarketSnapshot, Feature, Signal, LLMDecision,
-    RiskCheck, Order, Position, PortfolioSnapshot,
+    MarketSnapshot, Feature, FeatureExtended, Signal, StrategyVoteRecord,
+    LLMDecision, RiskCheck, Order, Position, PortfolioSnapshot,
 )
 from app.services.portfolio_manager import calculate_portfolio_snapshot
 
@@ -59,16 +59,51 @@ class PersistenceAgent(BaseAgent):
                 )
                 db.add(snapshot)
 
-            # Save features
+            # Save basic features
             features = state.get("features")
             if features:
                 db.add(Feature(
                     agent_id=agent_id,
-                    ema_fast=features["ema_fast"],
-                    ema_slow=features["ema_slow"],
-                    rsi=features["rsi"],
-                    atr=features["atr"],
-                    close=features["close"],
+                    ema_fast=features.get("ema_fast"),
+                    ema_slow=features.get("ema_slow"),
+                    rsi=features.get("rsi"),
+                    atr=features.get("atr"),
+                    close=features.get("close"),
+                ))
+
+                # Save extended features
+                db.add(FeatureExtended(
+                    agent_id=agent_id,
+                    ema_9=features.get("ema_9"),
+                    ema_21=features.get("ema_21"),
+                    ema_50=features.get("ema_50"),
+                    rsi=features.get("rsi"),
+                    stoch_k=features.get("stoch_k"),
+                    stoch_d=features.get("stoch_d"),
+                    macd_line=features.get("macd_line"),
+                    macd_signal=features.get("macd_signal"),
+                    macd_hist=features.get("macd_hist"),
+                    atr=features.get("atr"),
+                    bb_upper=features.get("bb_upper"),
+                    bb_middle=features.get("bb_middle"),
+                    bb_lower=features.get("bb_lower"),
+                    bb_width=features.get("bb_width"),
+                    bb_pct=features.get("bb_pct"),
+                    psar=features.get("psar"),
+                    adx=features.get("adx"),
+                    plus_di=features.get("plus_di"),
+                    minus_di=features.get("minus_di"),
+                    donchian_high=features.get("donchian_high"),
+                    donchian_low=features.get("donchian_low"),
+                    obv=features.get("obv"),
+                    obv_delta=features.get("obv_delta"),
+                    vol_sma_20=features.get("vol_sma_20"),
+                    vol_ratio=features.get("vol_ratio"),
+                    fib_382=features.get("fib_382"),
+                    fib_500=features.get("fib_500"),
+                    fib_618=features.get("fib_618"),
+                    fib_proximity=features.get("fib_proximity"),
+                    close=features.get("close"),
                 ))
 
             # Save signal
@@ -80,10 +115,24 @@ class PersistenceAgent(BaseAgent):
                     direction=signal["direction"],
                     confidence=signal["confidence"],
                     reason=signal["reason"],
+                    ensemble_score=signal.get("ensemble_score"),
                 )
                 db.add(sig)
                 db.flush()
                 signal_id = sig.id
+
+            # Save strategy votes
+            strategy_votes = state.get("strategy_votes", [])
+            if strategy_votes and signal_id:
+                for vote in strategy_votes:
+                    db.add(StrategyVoteRecord(
+                        agent_id=agent_id,
+                        signal_id=signal_id,
+                        strategy_name=vote["name"],
+                        score=vote["score"],
+                        weight=vote.get("weight", 1.0),
+                        reason=vote.get("reason", ""),
+                    ))
 
             # Save LLM decision
             llm_raw = state.get("llm_reasoning")
@@ -103,6 +152,7 @@ class PersistenceAgent(BaseAgent):
                     model_used=agent_config.get("llm_model", "unknown"),
                     reasoning=llm_data.get("reasoning", str(llm_raw)),
                     recommendation=llm_data.get("recommendation", ""),
+                    confidence_adjustment=llm_data.get("confidence_adjustment", 0.0),
                 ))
 
             # Save risk check
@@ -177,6 +227,10 @@ class PersistenceAgent(BaseAgent):
 
             db.commit()
 
+            # RL incremental update after trade
+            if trade and agent_config.get("enable_rl") and features:
+                self._rl_update(agent_id, features, trade, budget)
+
             # Broadcast WebSocket update
             ws_data = {
                 "type": "tick",
@@ -189,6 +243,8 @@ class PersistenceAgent(BaseAgent):
                     "trade": trade,
                     "portfolio": snap,
                     "llm_reasoning": state.get("llm_reasoning"),
+                    "sl_tp": state.get("sl_tp"),
+                    "ensemble_score": signal.get("ensemble_score") if signal else None,
                     "timestamp": datetime.now().isoformat(),
                 },
             }
@@ -201,6 +257,23 @@ class PersistenceAgent(BaseAgent):
             db.close()
 
         yield Event(author=self.name)
+
+    def _rl_update(self, agent_id: int, features: dict, trade: dict, budget: float):
+        """Incremental RL Q-table update after a trade."""
+        try:
+            from app.services.rl.model_store import ModelStore
+            from app.services.rl.q_learning import QLearningAgent
+
+            rl_agent = ModelStore.load(agent_id)
+            if not rl_agent:
+                return
+
+            action = rl_agent.direction_to_action(trade["side"].upper())
+            reward = trade.get("realized_pnl", 0) / budget if budget > 0 else 0
+            rl_agent.update(features, action, reward, features)
+            ModelStore.save(agent_id, rl_agent)
+        except Exception as e:
+            logger.warning(f"[RL] Incremental update failed: {e}")
 
     async def _broadcast(self, data: dict):
         if ws_manager:

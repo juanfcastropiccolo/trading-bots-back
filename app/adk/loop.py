@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from datetime import datetime
 
@@ -10,7 +11,6 @@ from app.adk.pipeline import create_trading_pipeline
 from app.config import settings
 from app.database import SessionLocal
 from app.models import AgentConfig, PortfolioSnapshot, Position, Feature, MarketSnapshot
-from app.services.exchange import exchange_service
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,14 @@ def request_shutdown():
 
 def _build_agent_config(agent: AgentConfig) -> dict:
     """Build the agent_config dict from DB model."""
+    # Parse strategy weights JSON
+    strategy_weights = {}
+    if agent.strategy_weights:
+        try:
+            strategy_weights = json.loads(agent.strategy_weights)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
     return {
         "id": agent.id,
         "name": agent.name,
@@ -44,6 +52,12 @@ def _build_agent_config(agent: AgentConfig) -> dict:
         "max_consecutive_losses": agent.max_consecutive_losses or 3,
         "rsi_buy_max": agent.rsi_buy_max or 70.0,
         "rsi_sell_min": agent.rsi_sell_min or 30.0,
+        # Advanced config
+        "strategy_weights": strategy_weights,
+        "stop_loss_atr_mult": agent.stop_loss_atr_mult or 2.0,
+        "take_profit_atr_mult": agent.take_profit_atr_mult or 3.0,
+        "risk_per_trade_pct": agent.risk_per_trade_pct or 0.02,
+        "enable_rl": agent.enable_rl or False,
     }
 
 
@@ -116,6 +130,8 @@ def _restore_prev_features_from_db(agent_id: int) -> dict | None:
 
 def _download_historical_data(agent_id: int, symbol: str):
     """Download 7 days of historical candles and store in DB."""
+    from app.services.exchange import exchange_service
+
     db = SessionLocal()
     try:
         existing = db.query(MarketSnapshot).filter(MarketSnapshot.agent_id == agent_id).count()
@@ -145,6 +161,21 @@ def _download_historical_data(agent_id: int, symbol: str):
         db.close()
 
 
+def _load_rl_model(agent_id: int, enable_rl: bool) -> float | None:
+    """Load RL model and return initial confidence (or None if disabled)."""
+    if not enable_rl:
+        return None
+    try:
+        from app.services.rl.model_store import ModelStore
+        rl_agent = ModelStore.load(agent_id)
+        if rl_agent:
+            logger.info(f"[Agent {agent_id}] RL model loaded")
+            return None  # Will be computed per tick in strategy_eval
+    except Exception as e:
+        logger.warning(f"[Agent {agent_id}] RL load failed: {e}")
+    return None
+
+
 def _seed_agents():
     """Seed BTC and ETH protected agents if they don't exist."""
     db = SessionLocal()
@@ -169,6 +200,9 @@ def _seed_agents():
                 max_consecutive_losses=3,
                 rsi_buy_max=70.0,
                 rsi_sell_min=30.0,
+                stop_loss_atr_mult=2.0,
+                take_profit_atr_mult=3.0,
+                risk_per_trade_pct=0.02,
             )
             db.add(btc)
             logger.info("Seeded BTC Trend Follower (protected, mid-risk)")
@@ -190,6 +224,9 @@ def _seed_agents():
                 max_consecutive_losses=5,
                 rsi_buy_max=80.0,
                 rsi_sell_min=20.0,
+                stop_loss_atr_mult=1.5,
+                take_profit_atr_mult=2.5,
+                risk_per_trade_pct=0.03,
             )
             db.add(eth)
             logger.info("Seeded ETH High-Risk (protected, aggressive)")
@@ -226,6 +263,9 @@ async def _run_single_agent_loop(agent_id: int):
     if prev_features:
         logger.info(f"[{symbol}] Restored prev_features: EMA9={prev_features['ema_fast']}, EMA21={prev_features['ema_slow']}")
 
+    # Load RL model if enabled
+    _load_rl_model(agent_id, agent_config.get("enable_rl", False))
+
     pipeline = create_trading_pipeline()
     session_service = InMemorySessionService()
     runner = Runner(
@@ -237,11 +277,58 @@ async def _run_single_agent_loop(agent_id: int):
     recent_orders: list[dict] = []
     tick_count = 0
 
+    # Default features for LLM template (all keys must exist)
+    default_features = {
+        "ema_fast": 0.0,
+        "ema_slow": 0.0,
+        "ema_9": 0.0,
+        "ema_21": 0.0,
+        "ema_50": 0.0,
+        "rsi": 50.0,
+        "atr": 0.0,
+        "close": 0.0,
+        "stoch_k": 50.0,
+        "stoch_d": 50.0,
+        "macd_line": 0.0,
+        "macd_signal": 0.0,
+        "macd_hist": 0.0,
+        "bb_upper": 0.0,
+        "bb_middle": 0.0,
+        "bb_lower": 0.0,
+        "bb_width": 0.0,
+        "bb_pct": 0.5,
+        "psar": 0.0,
+        "adx": 0.0,
+        "plus_di": 0.0,
+        "minus_di": 0.0,
+        "donchian_high": 0.0,
+        "donchian_low": 0.0,
+        "obv": 0.0,
+        "obv_delta": 0.0,
+        "vol_sma_20": 0.0,
+        "vol_ratio": 1.0,
+        "fib_382": 0.0,
+        "fib_500": 0.0,
+        "fib_618": 0.0,
+        "fib_proximity": 1.0,
+    }
+
     while not _shutdown:
         tick_count += 1
         logger.info(f"[{symbol}] === Tick #{tick_count} @ {datetime.now().isoformat()} ===")
 
         try:
+            # Compute RL confidence if enabled
+            rl_confidence = None
+            if agent_config.get("enable_rl") and prev_features:
+                try:
+                    from app.services.rl.model_store import ModelStore
+                    rl_agent = ModelStore.load(agent_id)
+                    if rl_agent:
+                        rl_confidence = rl_agent.get_confidence(prev_features)
+                except Exception:
+                    pass
+
             session = await session_service.create_session(
                 app_name=app_name,
                 user_id="system",
@@ -252,21 +339,22 @@ async def _run_single_agent_loop(agent_id: int):
                     "recent_orders": recent_orders,
                     "tick_error": None,
                     "current_price": 0.0,
-                    "features": {
-                        "ema_fast": 0.0,
-                        "ema_slow": 0.0,
-                        "rsi": 50.0,
-                        "atr": 0.0,
-                        "close": 0.0,
-                    },
+                    "features": default_features.copy(),
                     "signal": {
                         "direction": "HOLD",
                         "confidence": 0.0,
                         "reason": "awaiting data",
+                        "ensemble_score": 0.0,
                     },
                     "risk_approval": None,
                     "trade_result": None,
                     "llm_reasoning": None,
+                    "strategy_votes": [],
+                    "sl_tp": None,
+                    "rl_confidence": rl_confidence,
+                    "ohlcv_1h_data": None,
+                    "features_1h": None,
+                    "_tick_count": tick_count,
                 },
             )
 
@@ -288,7 +376,7 @@ async def _run_single_agent_loop(agent_id: int):
             )
             state = updated_session.state if updated_session else {}
 
-            if state.get("features"):
+            if state.get("features") and state["features"].get("ema_fast", 0) != 0:
                 prev_features = state["features"]
             if state.get("portfolio"):
                 portfolio = state["portfolio"]

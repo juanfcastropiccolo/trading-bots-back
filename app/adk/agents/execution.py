@@ -27,8 +27,9 @@ class ExecutionAgent(BaseAgent):
         current_price = ctx.session.state.get("current_price", 0)
         portfolio = ctx.session.state.get("portfolio", {})
         agent_config = ctx.session.state.get("agent_config", {})
+        features = ctx.session.state.get("features")
 
-        trade = simulate_trade(signal, current_price, portfolio, agent_config)
+        trade = simulate_trade(signal, current_price, portfolio, agent_config, features=features)
 
         if trade:
             # Update portfolio in state
