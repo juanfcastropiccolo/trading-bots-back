@@ -275,6 +275,31 @@ class PersistenceAgent(BaseAgent):
         except Exception as e:
             logger.warning(f"[RL] Incremental update failed: {e}")
 
+    @staticmethod
+    def _sanitize_for_json(obj):
+        """Recursively convert NaN/Infinity to None and numpy types to Python types."""
+        import math
+        if isinstance(obj, dict):
+            return {k: PersistenceAgent._sanitize_for_json(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [PersistenceAgent._sanitize_for_json(v) for v in obj]
+        if isinstance(obj, float):
+            if math.isnan(obj) or math.isinf(obj):
+                return None
+            return obj
+        # Handle numpy scalar types
+        type_name = type(obj).__module__
+        if type_name == "numpy":
+            try:
+                val = float(obj)
+                if math.isnan(val) or math.isinf(val):
+                    return None
+                return val
+            except (TypeError, ValueError):
+                return str(obj)
+        return obj
+
     async def _broadcast(self, data: dict):
         if ws_manager:
-            await ws_manager.broadcast(json.dumps(data))
+            clean = self._sanitize_for_json(data)
+            await ws_manager.broadcast(json.dumps(clean))
