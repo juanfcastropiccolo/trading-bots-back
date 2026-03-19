@@ -28,6 +28,16 @@ class Settings(BaseSettings):
     jwt_secret: str = ""
     jwt_expiration_hours: int = 24
 
+    @property
+    def adk_database_url(self) -> str | None:
+        """Return an async-compatible DB URL for ADK's DatabaseSessionService."""
+        url = self.database_url
+        if url.startswith("postgresql://"):
+            return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if url.startswith("postgres://"):
+            return url.replace("postgres://", "postgresql+asyncpg://", 1)
+        return None
+
     model_config = {
         "env_file": str(Path(__file__).resolve().parent.parent / ".env"),
         "env_file_encoding": "utf-8",

@@ -3,7 +3,7 @@ from typing import AsyncGenerator
 import pandas as pd
 from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
-from google.adk.events import Event
+from google.adk.events import Event, EventActions
 
 from app.services.feature_engine import calculate_features_extended
 
@@ -21,7 +21,7 @@ class FeatureCalcAgent(BaseAgent):
         ohlcv_data = ctx.session.state.get("ohlcv_data")
         if not ohlcv_data:
             ctx.session.state["tick_error"] = "No OHLCV data available"
-            yield Event(author=self.name)
+            yield Event(author=self.name, actions=EventActions(state_delta={"tick_error": "No OHLCV data available"}))
             return
 
         df = pd.DataFrame(ohlcv_data)
@@ -29,7 +29,7 @@ class FeatureCalcAgent(BaseAgent):
 
         if features is None:
             ctx.session.state["tick_error"] = "Not enough candles for feature calculation"
-            yield Event(author=self.name)
+            yield Event(author=self.name, actions=EventActions(state_delta={"tick_error": "Not enough candles for feature calculation"}))
             return
 
         # Carry forward previous features for crossover detection
@@ -54,4 +54,10 @@ class FeatureCalcAgent(BaseAgent):
             f"ADX={features.get('adx', 'N/A')}, BB%={features.get('bb_pct', 'N/A')}"
         )
 
-        yield Event(author=self.name)
+        state = ctx.session.state
+        delta = {
+            "features": state.get("features"),
+            "prev_features": state.get("prev_features"),
+            "features_1h": state.get("features_1h"),
+        }
+        yield Event(author=self.name, actions=EventActions(state_delta=delta))

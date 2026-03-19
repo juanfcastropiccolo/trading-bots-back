@@ -4,8 +4,9 @@ import logging
 from datetime import datetime
 
 from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
 from google.genai import types
+
+from app.adk.session import get_session_service
 
 from app.adk.pipeline import create_trading_pipeline
 from app.config import settings
@@ -295,14 +296,16 @@ async def _run_single_agent_loop(agent_id: int):
     _load_rl_model(agent_id, agent_config.get("enable_rl", False))
 
     pipeline = create_trading_pipeline()
-    session_service = InMemorySessionService()
+    session_service = get_session_service()
+    session_id = f"agent_{agent_id}"
+    user_id = "system"
     runner = Runner(
         agent=pipeline,
         app_name=app_name,
         session_service=session_service,
     )
 
-    recent_orders: list[dict] = []
+    recent_orders: list[dict] = _restore_recent_orders_from_db(agent_id)
     tick_count = 0
 
     # Default features for LLM template (all keys must exist)
@@ -341,6 +344,50 @@ async def _run_single_agent_loop(agent_id: int):
         "fib_proximity": 1.0,
     }
 
+    # Try to resume an existing session (survives restarts)
+    existing_session = await session_service.get_session(
+        app_name=app_name, user_id=user_id, session_id=session_id,
+    )
+    if existing_session:
+        # Restore persisted state from session
+        portfolio = existing_session.state.get("portfolio", portfolio)
+        prev_features = existing_session.state.get("prev_features", prev_features)
+        recent_orders = existing_session.state.get("recent_orders", recent_orders)
+        logger.info(f"[{symbol}] Resumed existing ADK session {session_id}")
+    else:
+        # Create the ONE session for this agent
+        initial_state = {
+            "agent_config": agent_config,
+            "portfolio": portfolio,
+            "prev_features": prev_features,
+            "recent_orders": recent_orders,
+            "tick_error": None,
+            "current_price": 0.0,
+            "features": default_features.copy(),
+            "signal": {
+                "direction": "HOLD",
+                "confidence": 0.0,
+                "reason": "awaiting data",
+                "ensemble_score": 0.0,
+            },
+            "risk_approval": None,
+            "trade_result": None,
+            "llm_reasoning": None,
+            "strategy_votes": [],
+            "sl_tp": None,
+            "rl_confidence": None,
+            "ohlcv_1h_data": None,
+            "features_1h": None,
+            "_tick_count": 0,
+        }
+        await session_service.create_session(
+            app_name=app_name,
+            user_id=user_id,
+            session_id=session_id,
+            state=initial_state,
+        )
+        logger.info(f"[{symbol}] Created new ADK session {session_id}")
+
     while not _shutdown:
         tick_count += 1
         logger.info(f"[{symbol}] === Tick #{tick_count} @ {datetime.now().isoformat()} ===")
@@ -357,57 +404,52 @@ async def _run_single_agent_loop(agent_id: int):
                 except Exception:
                     pass
 
-            session = await session_service.create_session(
-                app_name=app_name,
-                user_id="system",
-                state={
-                    "agent_config": agent_config,
-                    "portfolio": portfolio,
-                    "prev_features": prev_features,
-                    "recent_orders": recent_orders,
-                    "tick_error": None,
-                    "current_price": 0.0,
-                    "features": default_features.copy(),
-                    "signal": {
-                        "direction": "HOLD",
-                        "confidence": 0.0,
-                        "reason": "awaiting data",
-                        "ensemble_score": 0.0,
-                    },
-                    "risk_approval": None,
-                    "trade_result": None,
-                    "llm_reasoning": None,
-                    "strategy_votes": [],
-                    "sl_tp": None,
-                    "rl_confidence": rl_confidence,
-                    "ohlcv_1h_data": None,
-                    "features_1h": None,
-                    "_tick_count": tick_count,
-                },
+            # Get current session and reset transient keys for this tick
+            session = await session_service.get_session(
+                app_name=app_name, user_id=user_id, session_id=session_id,
             )
+            session.state["agent_config"] = agent_config
+            session.state["portfolio"] = portfolio
+            session.state["prev_features"] = prev_features
+            session.state["recent_orders"] = recent_orders
+            session.state["tick_error"] = None
+            session.state["current_price"] = 0.0
+            session.state["features"] = default_features.copy()
+            session.state["signal"] = {
+                "direction": "HOLD",
+                "confidence": 0.0,
+                "reason": "awaiting data",
+                "ensemble_score": 0.0,
+            }
+            session.state["risk_approval"] = None
+            session.state["trade_result"] = None
+            session.state["llm_reasoning"] = None
+            session.state["strategy_votes"] = []
+            session.state["sl_tp"] = None
+            session.state["rl_confidence"] = rl_confidence
+            session.state["ohlcv_1h_data"] = None
+            session.state["features_1h"] = None
+            session.state["_tick_count"] = tick_count
 
             content = types.Content(
                 role="user",
                 parts=[types.Part.from_text(text=f"Execute trading tick #{tick_count}")],
             )
             async for event in runner.run_async(
-                user_id="system",
-                session_id=session.id,
+                user_id=user_id,
+                session_id=session_id,
                 new_message=content,
             ):
                 pass
 
-            # Restore state from DB instead of get_session().
-            # ADK's InMemorySessionService.get_session() returns a deep copy
-            # of the ORIGINAL session, not the one modified by the pipeline
-            # agents (state_delta is not included in BaseAgent events).
-            # Reading from DB is authoritative since PersistenceAgent commits
-            # the correct portfolio/features/orders every tick.
-            portfolio = _restore_portfolio_from_db(agent_id, agent_config.get("budget_usd", 100.0))
-            restored_features = _restore_prev_features_from_db(agent_id)
-            if restored_features:
-                prev_features = restored_features
-            recent_orders = _restore_recent_orders_from_db(agent_id)
+            # Read back persisted state from session after pipeline
+            updated_session = await session_service.get_session(
+                app_name=app_name, user_id=user_id, session_id=session_id,
+            )
+            if updated_session:
+                portfolio = updated_session.state.get("portfolio", portfolio)
+                prev_features = updated_session.state.get("prev_features", prev_features)
+                recent_orders = updated_session.state.get("recent_orders", recent_orders)
 
         except asyncio.CancelledError:
             logger.info(f"[{symbol}] Agent loop cancelled")

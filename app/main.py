@@ -20,6 +20,7 @@ from app.database import engine, Base, _is_sqlite
 from app.websocket_manager import ws_manager
 from app.adk.agents.persistence import set_ws_manager
 from app.adk.loop import start_loop, request_shutdown
+from app.adk.session import init_session_service, close_session_service
 from app.api import agents, auth, trades, signals, market, ws
 
 logging.basicConfig(
@@ -80,6 +81,9 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Using PostgreSQL — tables managed via schema.sql")
 
+    # Initialize ADK session service (must be before start_loop)
+    await init_session_service()
+
     # Wire up WebSocket manager to persistence agent
     set_ws_manager(ws_manager)
 
@@ -97,6 +101,7 @@ async def lifespan(app: FastAPI):
     request_shutdown()
     loop_task.cancel()
     rl_task.cancel()
+    await close_session_service()
 
 
 app = FastAPI(

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import AsyncGenerator
 from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
-from google.adk.events import Event
+from google.adk.events import Event, EventActions
 
 from app.database import SessionLocal
 from app.models import (
@@ -37,7 +37,7 @@ class PersistenceAgent(BaseAgent):
                 "type": "error",
                 "data": {"error": state["tick_error"], "agent_id": agent_id},
             })
-            yield Event(author=self.name)
+            yield Event(author=self.name, actions=EventActions(state_delta={"tick_error": state["tick_error"]}))
             return
 
         db = SessionLocal()
@@ -188,6 +188,20 @@ class PersistenceAgent(BaseAgent):
                     mode=trade["mode"],
                 ))
 
+                # Update recent_orders in state (keep last 10)
+                recent = list(state.get("recent_orders", []))
+                recent.append({
+                    "side": trade["side"],
+                    "quantity": trade["quantity"],
+                    "price": trade["price"],
+                    "fee": trade["fee"],
+                    "total_cost": trade["total_cost"],
+                    "status": trade["status"],
+                    "mode": trade["mode"],
+                    "created_at": datetime.now().isoformat(),
+                })
+                state["recent_orders"] = recent[-10:]
+
             # Update position
             portfolio = state.get("portfolio", {})
             pos = db.query(Position).filter(Position.agent_id == agent_id).first()
@@ -256,7 +270,11 @@ class PersistenceAgent(BaseAgent):
         finally:
             db.close()
 
-        yield Event(author=self.name)
+        delta = {
+            "portfolio": state.get("portfolio"),
+            "recent_orders": state.get("recent_orders"),
+        }
+        yield Event(author=self.name, actions=EventActions(state_delta=delta))
 
     def _rl_update(self, agent_id: int, features: dict, trade: dict, budget: float):
         """Incremental RL Q-table update after a trade."""

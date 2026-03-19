@@ -2,7 +2,7 @@ import logging
 from typing import AsyncGenerator
 from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
-from google.adk.events import Event
+from google.adk.events import Event, EventActions
 
 from app.services.execution_engine import simulate_trade
 
@@ -20,7 +20,7 @@ class ExecutionAgent(BaseAgent):
         risk_approval = ctx.session.state.get("risk_approval", {})
         if not risk_approval.get("approved"):
             ctx.session.state["trade_result"] = None
-            yield Event(author=self.name)
+            yield Event(author=self.name, actions=EventActions(state_delta={"trade_result": None}))
             return
 
         signal = ctx.session.state.get("signal", {})
@@ -53,4 +53,8 @@ class ExecutionAgent(BaseAgent):
         else:
             ctx.session.state["trade_result"] = None
 
-        yield Event(author=self.name)
+        delta = {
+            "trade_result": ctx.session.state.get("trade_result"),
+            "portfolio": ctx.session.state.get("portfolio"),
+        }
+        yield Event(author=self.name, actions=EventActions(state_delta=delta))

@@ -2,7 +2,7 @@ import logging
 from typing import AsyncGenerator
 from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
-from google.adk.events import Event
+from google.adk.events import Event, EventActions
 
 from app.services.exchange import exchange_service
 from app.database import SessionLocal
@@ -51,7 +51,16 @@ class DataIngestionAgent(BaseAgent):
             if "current_price" not in ctx.session.state:
                 ctx.session.state["current_price"] = 0.0
 
-        yield Event(author=self.name)
+        state = ctx.session.state
+        delta = {
+            "current_price": state.get("current_price", 0.0),
+            "ohlcv_data": state.get("ohlcv_data"),
+            "ohlcv_timestamps": state.get("ohlcv_timestamps"),
+            "ohlcv_1h_data": state.get("ohlcv_1h_data"),
+            "tick_error": state.get("tick_error"),
+            "_tick_count": state.get("_tick_count"),
+        }
+        yield Event(author=self.name, actions=EventActions(state_delta=delta))
 
     def _load_hourly_from_db(self, ctx, agent_id: int):
         """Load last 50 hourly candles from market_snapshots table."""

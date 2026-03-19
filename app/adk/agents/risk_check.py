@@ -3,7 +3,7 @@ import logging
 from typing import AsyncGenerator
 from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
-from google.adk.events import Event
+from google.adk.events import Event, EventActions
 
 from app.services.risk_manager import check_risk
 
@@ -98,7 +98,12 @@ class RiskCheckAgent(BaseAgent):
         else:
             logger.info(f"Risk check REJECTED: {risk_result['rejection_reason']}")
 
-        yield Event(author=self.name)
+        delta = {
+            "risk_approval": ctx.session.state.get("risk_approval"),
+            "signal": ctx.session.state.get("signal"),
+            "sl_tp": ctx.session.state.get("sl_tp"),
+        }
+        yield Event(author=self.name, actions=EventActions(state_delta=delta))
 
     def _parse_llm(self, llm_raw) -> dict:
         if isinstance(llm_raw, dict):

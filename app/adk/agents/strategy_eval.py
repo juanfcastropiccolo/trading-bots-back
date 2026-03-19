@@ -2,7 +2,7 @@ import logging
 from typing import AsyncGenerator
 from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
-from google.adk.events import Event
+from google.adk.events import Event, EventActions
 
 from app.services.strategy_engine import evaluate_ensemble
 
@@ -22,7 +22,7 @@ class StrategyEvalAgent(BaseAgent):
 
         if not features:
             ctx.session.state["tick_error"] = "No features available"
-            yield Event(author=self.name)
+            yield Event(author=self.name, actions=EventActions(state_delta={"tick_error": "No features available"}))
             return
 
         agent_config = ctx.session.state.get("agent_config", {})
@@ -61,4 +61,8 @@ class StrategyEvalAgent(BaseAgent):
             f"ensemble={signal.get('ensemble_score', 'N/A')})"
         )
 
-        yield Event(author=self.name)
+        delta = {
+            "signal": ctx.session.state.get("signal"),
+            "strategy_votes": ctx.session.state.get("strategy_votes"),
+        }
+        yield Event(author=self.name, actions=EventActions(state_delta=delta))
