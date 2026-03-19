@@ -27,12 +27,16 @@ class DataIngestionAgent(BaseAgent):
             df = exchange_service.fetch_ohlcv(symbol, timeframe, limit=50)
             ticker = exchange_service.fetch_ticker(symbol)
 
-            # Store serializable data in state
-            ctx.session.state["ohlcv_data"] = df.to_dict(orient="list")
+            # Store serializable data in state (drop timestamp col — stored separately)
+            ohlcv = df.drop(columns=["timestamp"]).to_dict(orient="list")
+            # Convert numpy types to native Python for JSON serialization
+            ctx.session.state["ohlcv_data"] = {
+                k: [float(v) for v in vals] for k, vals in ohlcv.items()
+            }
             ctx.session.state["ohlcv_timestamps"] = [
                 t.isoformat() for t in df["timestamp"]
             ]
-            ctx.session.state["current_price"] = ticker["last"]
+            ctx.session.state["current_price"] = float(ticker["last"])
             ctx.session.state["tick_error"] = None
 
             logger.info(f"Ingested {len(df)} candles for {symbol}, price={ticker['last']}")
@@ -76,11 +80,11 @@ class DataIngestionAgent(BaseAgent):
             if len(snapshots) >= 30:
                 snapshots = list(reversed(snapshots))
                 ctx.session.state["ohlcv_1h_data"] = {
-                    "open": [s.open for s in snapshots],
-                    "high": [s.high for s in snapshots],
-                    "low": [s.low for s in snapshots],
-                    "close": [s.close for s in snapshots],
-                    "volume": [s.volume for s in snapshots],
+                    "open": [float(s.open) for s in snapshots],
+                    "high": [float(s.high) for s in snapshots],
+                    "low": [float(s.low) for s in snapshots],
+                    "close": [float(s.close) for s in snapshots],
+                    "volume": [float(s.volume) for s in snapshots],
                 }
                 logger.info(f"Loaded {len(snapshots)} historical candles for 1h features")
             else:

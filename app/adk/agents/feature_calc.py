@@ -1,3 +1,4 @@
+import math
 import logging
 from typing import AsyncGenerator
 import pandas as pd
@@ -8,6 +9,18 @@ from google.adk.events import Event, EventActions
 from app.services.feature_engine import calculate_features_extended
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_features(features: dict) -> dict:
+    """Convert numpy types to native Python for JSON serialization."""
+    result = {}
+    for k, v in features.items():
+        try:
+            val = float(v)
+            result[k] = None if math.isnan(val) or math.isinf(val) else val
+        except (TypeError, ValueError):
+            result[k] = v
+    return result
 
 
 class FeatureCalcAgent(BaseAgent):
@@ -37,6 +50,7 @@ class FeatureCalcAgent(BaseAgent):
         if current_features and current_features.get("ema_fast", 0) != 0:
             ctx.session.state["prev_features"] = current_features
 
+        features = _sanitize_features(features)
         ctx.session.state["features"] = features
 
         # Calculate 1h features if available (multi-timeframe)
@@ -45,6 +59,7 @@ class FeatureCalcAgent(BaseAgent):
             df_1h = pd.DataFrame(ohlcv_1h)
             features_1h = calculate_features_extended(df_1h)
             if features_1h:
+                features_1h = _sanitize_features(features_1h)
                 ctx.session.state["features_1h"] = features_1h
                 logger.info(f"1h features: EMA9={features_1h.get('ema_fast')}, RSI={features_1h.get('rsi')}")
 
