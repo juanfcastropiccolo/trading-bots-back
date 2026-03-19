@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 def check_risk(
@@ -70,7 +70,8 @@ def check_risk(
         if last_order_time:
             if isinstance(last_order_time, str):
                 last_order_time = datetime.fromisoformat(last_order_time)
-            if datetime.now() - last_order_time < timedelta(minutes=cooldown_minutes):
+            now = datetime.now(timezone.utc) if last_order_time.tzinfo else datetime.now()
+            if now - last_order_time < timedelta(minutes=cooldown_minutes):
                 checks["cooldown_ok"] = False
                 reasons.append(f"Cooldown: less than {cooldown_minutes} min since last trade")
 
